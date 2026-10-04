@@ -134,9 +134,7 @@
 ---
 
 ## 🌐 Deployment Notes
-
-- **Backend (FastAPI + YOLO + OpenCV):** Recommended platforms supporting persistent connections and OpenCV/PyTorch workloads include **[Render.com](https://render.com)** or **[Koyeb.com](https://www.koyeb.com)**.
-- **Frontend (React):** Easily deployable on **Vercel**, **Netlify**, or **Cloudflare Pages**.
+- **Frontend Application:** [https://car-prediction-reactjs.vercel.app](https://fine-demo-five.vercel.app/) .
 
 ---
 
