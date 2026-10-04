@@ -1,0 +1,32 @@
+# Python / Virtual Environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Environment Variables & Secrets (هام لحماية API Keys)
+.env
+assets/.env
+*.env
+
+# Output Folders & Generated Data
+crop_*/
+runs/
+*.jpg
+*.jpeg
+*.png
+
+# Large Model Files / Weights Checkpoints (اختياري)
+# model/*.pt
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+
+# Docker / OS Files
+.DS_Store
+Thumbs.db
