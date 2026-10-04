@@ -56,7 +56,7 @@
 │                   YES                 NO                    │
 │                    │                   │                    │
 │                    ▼                   ▼                    │
-│          Increment Total Count    Continue Track           │
+│          Increment Total Count    Continue Track            │
 │                    │                                        │
 │          Is Package Damaged?                                │
 │           ├── YES ──> Save Crop & Log to MySQL              │
