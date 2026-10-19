@@ -8,16 +8,17 @@ from helpers.config import (
     CY_LINE, OFFSET, ROI_X_MIN, ROI_X_MAX, FRAME_SIZE, DEFAULT_VIDEO,
 )
 
-
 class CameraStreamManager:
     def __init__(self, camera_id: str, model, db, executor,
-                 video_source: str = DEFAULT_VIDEO):
+                arduino=None, video_source: str = DEFAULT_VIDEO):
         self.camera_id = camera_id
         self.video_source = video_source
         self.model = model
         self.db = db
         self.executor = executor
-
+        self.arduino = arduino
+        self.last_state = None
+        
         self.is_running = False
         self.cap = None
         self.lock = threading.Lock()
@@ -134,6 +135,11 @@ class CameraStreamManager:
             res = self.model.predict(crop, verbose=False)
             if res and res[0].boxes is not None and len(res[0].boxes) > 0:
                 damage_status = any(c == 0 for c in res[0].boxes.cls.int().tolist())
+
+        # Arduino: ON when damaged, OFF when normal (only on state change)
+        if self.arduino and damage_status != self.last_state:
+            self.arduino.send("ON" if damage_status else "OFF")
+            self.last_state = damage_status
 
         if not damage_status:
             return
