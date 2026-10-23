@@ -43,33 +43,33 @@ export default function LogsPanel({ liveLogs, historyLogs }: Props) {
       <div className="mt-4 max-h-[480px] overflow-auto">
         <table className="w-full text-left text-sm">
           <thead className="sticky top-0 bg-slate-100 text-slate-700">
-            <tr>
+            <tr className="text-center">
               <th className="px-3 py-3 font-semibold">Camera</th>
               <th className="px-3 py-3 font-semibold">Track ID</th>
               <th className="px-3 py-3 font-semibold">Status / Defect</th>
-              <th className="px-3 py-3 text-right font-semibold">Time</th>
+              <th className="px-3 py-3 font-semibold">Time</th>
             </tr>
           </thead>
           <tbody>
             {logs.map((log, i) => (
               <tr
                 key={`${log["Track ID"]}-${log.Time}-${i}`}
-                className="border-b border-slate-100"
+                className="border-b border-slate-100 text-center"
               >
                 <td className="px-3 py-3 text-slate-700">{log.Camera}</td>
                 <td className="px-3 py-3 text-slate-700">{log["Track ID"]}</td>
                 <td className="px-3 py-3">
                   <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      log.damage === "Damaged"
-                        ? "bg-red-50 text-red-600"
-                        : "bg-emerald-50 text-emerald-600"
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${
+                      log.defective === 'defective'
+                        ? 'bg-red-50 text-red-600'
+                        : 'bg-emerald-50 text-emerald-600'
                     }`}
                   >
-                    {log.damage}
+                    {log.defective}
                   </span>
                 </td>
-                <td className="px-3 py-3 text-right text-slate-500">{log.Time}</td>
+                <td className="px-3 py-3 text-slate-500">{log.Time}</td>
               </tr>
             ))}
           </tbody>

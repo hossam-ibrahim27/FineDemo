@@ -1,158 +1,221 @@
 import threading
 import time
+from collections import defaultdict
 from datetime import datetime
-
 import cv2
-
 from helpers.config import (
-    CY_LINE, OFFSET, ROI_X_MIN, ROI_X_MAX, FRAME_SIZE, DEFAULT_VIDEO,
+    CONFIDENCE, DEFAULT_VIDEO, DEFECT_LABEL, DEVICE, FRAME_SIZE, GOOD_LABEL,
+    LOST_FRAMES, MIN_BOX_AREA_RATIO, MIN_VOTES_ON_EXIT, VOTES_REQUIRED,
 )
 
 class CameraStreamManager:
-    def __init__(self, camera_id: str, model, db, executor,
-                arduino=None, video_source: str = DEFAULT_VIDEO):
+    def __init__(self, camera_id: str, model, db,
+                 arduino=None, video_source: str = DEFAULT_VIDEO):
         self.camera_id = camera_id
         self.video_source = video_source
         self.model = model
         self.db = db
-        self.executor = executor
         self.arduino = arduino
-        self.last_state = None
-        
+
+        # GET CLASS IDS FOR GOOD AND DEFECTIVE FROM MODEL (SAME AS ANNOTATION)
+        self.good_id, self.defect_id = self._resolve_class_ids()
+
         self.is_running = False
         self.cap = None
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()   # RLock: the same thread may take it again
 
-        # Stats and session logs
-        self.total_tracked = 0
-        self.defective_count = 0
+        self.votes = defaultdict(list)  # track_id -> [True if defective, ...]
+        self.last_seen = {}             # track_id -> frame number it was last detected
+        self.frame_idx = 0
         self.processed_ids = set()
-        self.live_session_logs = []
+        self.pass_count = 0
+        self.reject_count = 0
+        self.live_session_logs = []     # what the UI shows for the current session
+        self._unsaved = []              # rows waiting to be written to MySQL on stop
+
+    # ---------- Setup ----------
+    def _resolve_class_ids(self):
+        names = self.model.names
+        items = names.items() if isinstance(names, dict) else enumerate(names)
+        class_names = {int(k): str(v).strip().lower() for k, v in items}
+        print("[INFO] Classes:", class_names)
+
+        good = [k for k, v in class_names.items() if v == GOOD_LABEL]
+        defect = [k for k, v in class_names.items() if v == DEFECT_LABEL]
+        if not good or not defect:
+            raise ValueError(
+                f"Expected classes '{GOOD_LABEL}' and '{DEFECT_LABEL}'. Found: {class_names}"
+            )
+        return good[0], defect[0]
+
+    def _reset_tracking(self):
+        self.votes.clear()
+        self.last_seen.clear()
+        self.processed_ids.clear()
+
+    def _reset_session(self):
+        self._reset_tracking()
+        self.live_session_logs.clear()
+        self.pass_count = 0
+        self.reject_count = 0
 
     # ---------- Control ----------
     def start_monitoring(self):
         with self.lock:
-            if not self.is_running:
-                self.processed_ids.clear()
-                self.live_session_logs.clear()
-                self.total_tracked = 0
-                self.defective_count = 0
-
-                if self.cap is None or not self.cap.isOpened():
-                    self.cap = cv2.VideoCapture(self.video_source)
-                self.is_running = True
-                return {"status": "success", "message": f"Camera {self.camera_id} started monitoring."}
-            return {"status": "info", "message": f"Camera {self.camera_id} is already running."}
+            if self.is_running:
+                return {"status": "info", "message": f"Camera {self.camera_id} is already running."}
+            self._reset_session()
+            if self.cap is None or not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(self.video_source)
+            self.is_running = True
+            return {"status": "success", "message": f"Camera {self.camera_id} started monitoring."}
 
     def stop_monitoring(self):
-        with self.lock:
-            self.is_running = False
-            return {"status": "success", "message": f"Camera {self.camera_id} stopped monitoring."}
-
+            with self.lock:
+                self.is_running = False
+                unsaved, self._unsaved = self._unsaved, []
+    
+            if self.arduino:
+                self.arduino.send("X")   # relay OFF
+    
+            saved = 0
+            if unsaved:
+                print(f"[STOP] saving {len(unsaved)} defects to the database...")
+                try:
+                    saved = self.db.log_many(unsaved)   # history is written ONLY here
+                    print(f"[STOP] saved {saved} rows")
+                except Exception as e:
+                    print(f"[DB Error]: {type(e).__name__}: {e}")
+                    with self.lock:
+                        self._unsaved = unsaved + self._unsaved
+                    return {
+                        "status": "warning",
+                        "message": f"Camera {self.camera_id} stopped, but saving to the database failed.",
+                        "saved": 0,
+                        "error": str(e),
+                    }
+            else:
+                print("[STOP] nothing to save")
+            return {
+                "status": "success",
+                "message": f"Camera {self.camera_id} stopped monitoring.",
+                "saved": saved,
+            }
     def get_stats(self):
         return {
-            "total_tracked_packages": self.total_tracked,
-            "defective_packages": self.defective_count,
+            "total_tracked_packages": self.pass_count + self.reject_count,
+            "defective_packages": self.reject_count,
             "system_status": "Active Mode" if self.is_running else "Standby Mode",
             "is_running": self.is_running,
         }
 
     # ---------- Streaming ----------
     def generate_frames(self):
-        if self.cap is None or not self.cap.isOpened():
-            self.cap = cv2.VideoCapture(self.video_source)
-
         while True:
-            if not self.cap or not self.cap.isOpened():
+            if self.cap is None or not self.cap.isOpened():
                 self.cap = cv2.VideoCapture(self.video_source)
+                if not self.cap.isOpened():
+                    time.sleep(0.5)
+                    continue
 
-            ret, frame = self.cap.read()
-            if not ret:
+            ok, frame = self.cap.read()
+            if not ok:
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                self.processed_ids.clear()
+                with self.lock:
+                    self._reset_tracking()
                 continue
 
-            frame = cv2.resize(frame, FRAME_SIZE)
-            cv2.line(frame, (0, CY_LINE), (FRAME_SIZE[0], CY_LINE), (0, 255, 255), 2)
+            output = self._inspect(frame) if self.is_running else frame
+            output = cv2.resize(output, FRAME_SIZE)
 
-            if self.is_running:
-                self._track_and_draw(frame)
-
-            _, buffer = cv2.imencode(".jpg", frame)
+            _, buffer = cv2.imencode(".jpg", output)
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
             )
             time.sleep(0.03)
 
-    def _track_and_draw(self, frame):
-        results = self.model.track(frame, persist=True, verbose=False, device="cpu")
-        boxes_obj = results[0].boxes
-        if boxes_obj is None or boxes_obj.id is None:
+    # ---------- Inference + voting ----------
+    def _inspect(self, frame):
+        result = self.model.track(
+            frame,
+            persist=True,
+            tracker="bytetrack.yaml",
+            conf=CONFIDENCE,
+            verbose=False,
+            device=DEVICE,
+        )[0]
+
+        ids, classes, areas, min_area = [], [], [], 0.0
+        boxes = result.boxes
+        if boxes is not None and boxes.id is not None and boxes.cls is not None:
+            height, width = frame.shape[:2]
+            min_area = MIN_BOX_AREA_RATIO * width * height
+            ids = boxes.id.int().cpu().tolist()
+            classes = boxes.cls.int().cpu().tolist()
+            areas = (boxes.xywh[:, 2] * boxes.xywh[:, 3]).cpu().tolist()
+
+        with self.lock:
+            if self.is_running:   # a frame that finishes after Stop must not vote
+                self.frame_idx += 1
+                for track_id, class_id, area in zip(ids, classes, areas):
+                    self.last_seen[track_id] = self.frame_idx
+                    if area >= min_area:   # far / tiny boxes are unreliable: no vote
+                        self._vote(track_id, class_id)
+                self._flush_lost_tracks()
+
+        return result.plot()
+
+    def _vote(self, track_id: int, class_id: int):
+        if track_id in self.processed_ids:
+            return
+        if class_id not in (self.good_id, self.defect_id):
             return
 
-        boxes = boxes_obj.xyxy.int().cpu().tolist()
-        track_ids = boxes_obj.id.int().cpu().tolist()
-        cls_ids = boxes_obj.cls.int().cpu().tolist() if boxes_obj.cls is not None else []
-        h, w, _ = frame.shape
+        history = self.votes[track_id]
+        history.append(class_id == self.defect_id)   # True = defective
+        if len(history) >= VOTES_REQUIRED:
+            self._decide(track_id)
 
-        for idx, (box, track_id) in enumerate(zip(boxes, track_ids)):
-            x1, y1, x2, y2 = box
-            cx = (x1 + x2) // 2
-            cy = (y1 + y2) // 2
-
-            if cx < ROI_X_MIN or cx > ROI_X_MAX:
+    def _flush_lost_tracks(self):
+        """A package that left the frame before collecting enough votes is decided
+        with the votes it has, instead of being skipped."""
+        lost = [t for t, seen in self.last_seen.items()
+                if self.frame_idx - seen > LOST_FRAMES]
+        for track_id in lost:
+            del self.last_seen[track_id]
+            if track_id in self.processed_ids:
                 continue
+            if len(self.votes.get(track_id, [])) >= MIN_VOTES_ON_EXIT:
+                self._decide(track_id)
+            else:
+                self.votes.pop(track_id, None)
 
-            cls_id = cls_ids[idx] if idx < len(cls_ids) else None
-            is_damaged = cls_id == 0
-            color = (0, 0, 255) if is_damaged else (0, 255, 0)
-            label = f"ID: {track_id} {'[DAMAGED]' if is_damaged else '[NORMAL]'}"
+    def _decide(self, track_id: int):
+        history = self.votes.pop(track_id, [])
+        self.processed_ids.add(track_id)
+        defect_votes = sum(history)
+        is_defective = defect_votes * 2 >= len(history)   # majority, a tie rejects
 
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, label, (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-            crossed = (
-                (CY_LINE - OFFSET) <= cy <= (CY_LINE + OFFSET)
-                or (CY_LINE - OFFSET) <= y2 <= (CY_LINE + OFFSET)
-            )
-            if crossed and track_id not in self.processed_ids:
-                self.processed_ids.add(track_id)
-                self.total_tracked += 1
-
-                crop = frame[max(0, y1):min(h, y2), max(0, x1):min(w, x2)].copy()
-                if crop.size > 0:
-                    self.executor.submit(self._process_detection, crop, track_id, cls_id)
-
-    # ---------- Background processing ----------
-    def _process_detection(self, crop, track_id, cls_id=None):
-        damage_status = False
-
-        if cls_id is not None:
-            damage_status = cls_id == 0
+        if is_defective:
+            self.reject_count += 1
+            print(f"[DECISION] ID {track_id}: DEFECTIVE ({defect_votes}/{len(history)} votes)")
+            if self.arduino:
+                self.arduino.send("R")
+            self._record_defect(track_id)
         else:
-            res = self.model.predict(crop, verbose=False)
-            if res and res[0].boxes is not None and len(res[0].boxes) > 0:
-                damage_status = any(c == 0 for c in res[0].boxes.cls.int().tolist())
+            self.pass_count += 1
+            print(f"[DECISION] ID {track_id}: GOOD - PASS ({defect_votes}/{len(history)} defective votes)")
 
-        # Arduino: ON when damaged, OFF when normal (only on state change)
-        if self.arduino and damage_status != self.last_state:
-            self.arduino.send("ON" if damage_status else "OFF")
-            self.last_state = damage_status
+        print(f"[COUNT] PASS={self.pass_count}, REJECT={self.reject_count}")
 
-        if not damage_status:
-            return
-
-        self.defective_count += 1
-        self.live_session_logs.insert(0, {
-            "Camera": f"CAM #{self.camera_id}",
-            "Track ID": track_id,
-            "damage": "Damaged",
-            "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        })
-
-        try:
-            self.db.log_inspection(track_id=track_id, damage=True)
-        except Exception as e:
-            print(f"[DB Error]: {e}")
+    def _record_defect(self, track_id: int):
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self.lock:
+            self.live_session_logs.insert(0, {
+                "Camera": f"CAM #{self.camera_id}",
+                "Track ID": track_id,
+                "defective": "defective",
+                "Time": stamp,
+            })
+        self._unsaved.append((track_id, True, stamp))   # saved on stop

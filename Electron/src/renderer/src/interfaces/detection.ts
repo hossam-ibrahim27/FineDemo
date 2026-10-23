@@ -8,7 +8,7 @@ export interface CameraStats {
 export interface InspectionLog {
   Camera: string
   'Track ID': number
-  damage: 'Damaged' | 'Normal'
+  defective: 'defective' | 'good'
   Time: string
 }
 

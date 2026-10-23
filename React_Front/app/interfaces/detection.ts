@@ -6,10 +6,10 @@ export interface CameraStats {
 }
 
 export interface InspectionLog {
-  Camera: string;
-  "Track ID": number;
-  damage: "Damaged" | "Normal";
-  Time: string;
+  Camera: string
+  'Track ID': number
+  defective: 'defective' | 'good'
+  Time: string
 }
 
 export interface ActionResponse {

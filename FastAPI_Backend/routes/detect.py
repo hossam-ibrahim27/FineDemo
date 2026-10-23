@@ -1,15 +1,13 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+
 detect_router = APIRouter(prefix="/api/v1", tags=["detect"])
-
-
 def _get_camera(request: Request, cam_id: str):
     camera = request.app.state.cameras.get(cam_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
     return camera
-
 
 @detect_router.get("/{cam_id}/feed")
 def get_camera_feed(request: Request, cam_id: str):
@@ -18,7 +16,6 @@ def get_camera_feed(request: Request, cam_id: str):
         camera.generate_frames(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
-
 
 @detect_router.post("/{cam_id}/start")
 def start_camera_monitoring(request: Request, cam_id: str):

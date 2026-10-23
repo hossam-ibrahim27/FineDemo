@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { CameraStats, InspectionLog } from '~/interfaces/detection'
-import { HISTORY_POLL_INTERVAL_MS, POLL_INTERVAL_MS } from '~/lib/config'
+import { POLL_INTERVAL_MS } from '~/lib/config'
 import { detectionService } from '~/services/detection'
 
 const INITIAL_STATS: CameraStats = {
@@ -44,7 +44,7 @@ export function useCameraMonitor(camId: string): UseCameraMonitorResult {
     try {
       setHistoryLogs(await detectionService.getHistoryLogs())
     } catch {
-      // الخطأ بيتعرض من الـ live polling
+      // the live polling already shows the error
     }
   }, [])
 
@@ -60,30 +60,28 @@ export function useCameraMonitor(camId: string): UseCameraMonitorResult {
     }
   }, [refreshLive])
 
+  // history: loaded once on open, then only after Stop
   useEffect(() => {
-    const tick = (): void => {
-      void refreshHistory()
-    }
-    const first = setTimeout(tick, 0)
-    const id = setInterval(tick, HISTORY_POLL_INTERVAL_MS)
-    return () => {
-      clearTimeout(first)
-      clearInterval(id)
-    }
+    const first = setTimeout(() => void refreshHistory(), 0)
+    return () => clearTimeout(first)
   }, [refreshHistory])
 
   const toggle = useCallback(async (): Promise<void> => {
     setBusy(true)
     try {
-      if (stats.is_running) await detectionService.stop(camId)
-      else await detectionService.start(camId)
+      if (stats.is_running) {
+        await detectionService.stop(camId)   // backend saves the session to MySQL here
+        await refreshHistory()
+      } else {
+        await detectionService.start(camId)
+      }
       await refreshLive()
     } catch {
       setError('Action failed. Check the backend server.')
     } finally {
       setBusy(false)
     }
-  }, [camId, stats.is_running, refreshLive])
+  }, [camId, stats.is_running, refreshLive, refreshHistory])
 
   return { stats, liveLogs, historyLogs, busy, error, toggle }
 }

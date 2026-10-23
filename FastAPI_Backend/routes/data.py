@@ -1,9 +1,8 @@
 from fastapi import APIRouter, HTTPException, Request
 
-data_router = APIRouter(prefix="/api", tags=["data"])
 
-
-@data_router.get("/history_logs")
+historyLogs_router = APIRouter(prefix="/api", tags=["data"])
+@historyLogs_router.get("/history_logs")
 def get_history_logs(request: Request):
     try:
         logs = request.app.state.db.get_all_logs()
@@ -11,7 +10,7 @@ def get_history_logs(request: Request):
             {
                 "Camera": "CAM #1",
                 "Track ID": log.get("track_id"),
-                "damage": "Damaged" if log.get("damage") else "Normal",
+                "defective": "defective" if log.get("defective") else "good",
                 "Time": str(log.get("created_at", "")),
             }
             for log in logs

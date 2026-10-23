@@ -8,7 +8,7 @@ interface Props {
   historyLogs: InspectionLog[]
 }
 
-export default function LogsPanel({ liveLogs, historyLogs }: Props) {
+export default function LogsPanel({ liveLogs, historyLogs }: Props): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('live')
   const logs = tab === 'live' ? liveLogs : historyLogs
 
@@ -57,13 +57,13 @@ export default function LogsPanel({ liveLogs, historyLogs }: Props) {
                 <td className="px-3 py-3 text-slate-700">{log['Track ID']}</td>
                 <td className="px-3 py-3">
                   <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      log.damage === 'Damaged'
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${
+                      log.defective === 'defective'
                         ? 'bg-red-50 text-red-600'
                         : 'bg-emerald-50 text-emerald-600'
                     }`}
                   >
-                    {log.damage}
+                    {log.defective}
                   </span>
                 </td>
                 <td className="px-3 py-3 text-right text-slate-500">{log.Time}</td>

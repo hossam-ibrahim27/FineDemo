@@ -3,4 +3,3 @@ export const API_BASE_URL: string =
 
 export const DEFAULT_CAMERA_ID = '1'
 export const POLL_INTERVAL_MS = 1000
-export const HISTORY_POLL_INTERVAL_MS = 3000

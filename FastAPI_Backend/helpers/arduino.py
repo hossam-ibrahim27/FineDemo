@@ -1,8 +1,6 @@
 import threading
 import time
-
 import serial
-
 
 class ArduinoHandler:
     def __init__(self, port: str, baudrate: int = 9600):
@@ -11,41 +9,50 @@ class ArduinoHandler:
         self.serial = None
         self._lock = threading.Lock()
 
-    def connect(self):
+    @property
+    def connected(self) -> bool:
+        return self.serial is not None and self.serial.is_open
+
+    def connect(self) -> bool:
         if not self.port:
-            print("ARDUINO_PORT not set, running without Arduino.")
-            return
+            print("[ARDUINO] ARDUINO_PORT not set, running without Arduino.")
+            return False
         try:
             with self._lock:
-                if self.serial and self.serial.is_open:
-                    return
-                self.serial = serial.Serial(self.port, self.baudrate, timeout=1)
-            time.sleep(2)  # Uno resets when the port opens
-            print(f"Arduino connected on {self.port}")
+                if self.connected:
+                    return True
+                self.serial = serial.Serial(
+                    self.port, self.baudrate, timeout=1, write_timeout=1
+                )
+                time.sleep(2)  # Arduino may reset when the port opens
+                self.serial.reset_input_buffer()
+            print(f"[ARDUINO] Connected on {self.port}")
+            return True
         except (serial.SerialException, OSError) as e:
             self.serial = None
-            print(f"Arduino connection failed: {e}. AI can still run without Arduino.")
+            print(f"[ARDUINO] Connection failed: {e}. Running without Arduino.")
+            return False
 
-    def send(self, command: str):
-        if command not in ("ON", "OFF"):
-            print(f"Invalid Arduino command: {command}")
-            return
-        try:
-            with self._lock:
-                if not self.serial or not self.serial.is_open:
-                    return
-                self.serial.write((command + "\n").encode("utf-8"))
+    def send(self, signal: str) -> bool:
+        """Send a one-letter command: 'R' = reject (relay), 'X' = relay off."""
+        with self._lock:
+            if not self.connected:
+                return False
+            try:
+                self.serial.write((signal + "\n").encode("ascii"))
                 self.serial.flush()
-        except (serial.SerialException, OSError) as e:
-            print(f"Arduino communication error: {e}")
+                print(f"[CONTROL SIGNAL] Sent: {signal}")
+                return True
+            except (serial.SerialException, OSError) as e:
+                print(f"[ARDUINO] Send error: {e}")
+                return False
 
     def close(self):
-        try:
-            with self._lock:
-                if self.serial and self.serial.is_open:
-                    self.serial.write(b"OFF\n")
-                    self.serial.flush()
-                    self.serial.close()
+        if self.connected:
+            self.send("X")
+            time.sleep(0.1)
+        with self._lock:
+            if self.serial and self.serial.is_open:
+                self.serial.close()
             self.serial = None
-        except (serial.SerialException, OSError) as e:
-            print(f"Error closing Arduino: {e}")
+        print("[ARDUINO] Closed.")

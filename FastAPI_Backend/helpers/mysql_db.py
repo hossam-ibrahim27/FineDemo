@@ -1,10 +1,9 @@
 import threading
 import mysql.connector
 
-
 class DatabaseHandler:
-
     def __init__(self, host, user, password, database, port):
+        # REMOVE HOSTNAME 
         clean_host = (
             str(host)
             .replace("http://", "")
@@ -30,9 +29,8 @@ class DatabaseHandler:
         query_table = """
         CREATE TABLE IF NOT EXISTS inspection_logs (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            track_id INT UNIQUE,
-            damage BOOLEAN NOT NULL DEFAULT FALSE,
-            image_path VARCHAR(255) DEFAULT NULL,
+            track_id INT,
+            defective BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -40,25 +38,23 @@ class DatabaseHandler:
             cursor = self.get_cursor()
             cursor.execute(query_table)
             cursor.close()
-
-    def log_inspection(self, track_id, damage, image_path=None):
-        query = """
-        INSERT INTO inspection_logs (track_id, damage, image_path)
-        VALUES (%s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            damage = VALUES(damage),
-            image_path = VALUES(image_path)
-        """
+            
+    def log_many(self, rows):
+        """rows: list of (track_id, defective, created_at)"""
+        query = (
+            "INSERT INTO inspection_logs (track_id, defective, created_at) "
+            "VALUES (%s, %s, %s)"
+        )
         with self._lock:
             cursor = self.get_cursor()
-            cursor.execute(query, (track_id, damage, image_path))
+            cursor.executemany(query, rows)
             cursor.close()
-
+            return len(rows)
     def get_all_logs(self):
         with self._lock:
             cursor = self.get_cursor()
             cursor.execute(
-                "SELECT id, track_id, damage, image_path, created_at "
+                "SELECT id, track_id, defective, created_at "
                 "FROM inspection_logs ORDER BY id DESC"
             )
             logs = cursor.fetchall()

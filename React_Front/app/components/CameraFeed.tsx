@@ -74,7 +74,7 @@ export default function CameraFeed({
         <button
           onClick={onToggle}
           disabled={busy}
-          className={`inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors disabled:opacity-60 ${
+          className={`inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors disabled:opacity-60 cursor-pointer ${
             isRunning
               ? "bg-red-600 hover:bg-red-700"
               : "bg-emerald-600 hover:bg-emerald-700"
